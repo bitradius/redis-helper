@@ -9,6 +9,13 @@ export default class extends EventEmitter {
     private readonly m_client: RedisClient;
     public ttl = 60;
 
+    /**
+     * Constructs a new Redis helper instance
+     * @param port
+     * @param host
+     * @param password
+     * @param database
+     */
     constructor (
         private port = 6379,
         private host = '127.0.0.1',
@@ -48,14 +55,25 @@ export default class extends EventEmitter {
         return super.on(event, listener);
     }
 
+    /**
+     * Returns the underlying RedisClient instance
+     */
     public get client (): RedisClient {
         return this.m_client;
     }
 
+    /**
+     * Ends the underlying RedisClient instance
+     * @param flush
+     */
     public async end (flush = true): Promise<void> {
         this.m_client.end(flush);
     }
 
+    /**
+     * Retrieves the value for the provided key
+     * @param key
+     */
     public async get<T> (key: any): Promise<T> {
         return new Promise((resolve, reject) => {
             this.m_client.get(
@@ -80,6 +98,9 @@ export default class extends EventEmitter {
         });
     }
 
+    /**
+     * Quits the underlying RedisClient instance
+     */
     public async quit (): Promise<void> {
         return new Promise(resolve => {
             this.m_client.quit(() => {
@@ -88,6 +109,12 @@ export default class extends EventEmitter {
         });
     }
 
+    /**
+     * Sets the value for the provided key with the specified TTL (or the default)
+     * @param key
+     * @param value
+     * @param ttl
+     */
     public async set<T> (key: any, value: T, ttl = this.ttl): Promise<void> {
         return new Promise((resolve, reject) => {
             this.m_client.set(
@@ -107,6 +134,9 @@ export default class extends EventEmitter {
         });
     }
 
+    /**
+     * Unref the underlying RedisClient socket so that the thread it is attached to can be closed
+     */
     public async unref (): Promise<void> {
         this.m_client.unref();
     }
