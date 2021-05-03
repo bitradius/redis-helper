@@ -7,7 +7,7 @@ import { EventEmitter } from 'events';
 
 export default class extends EventEmitter {
     private readonly m_client: RedisClient;
-    public ttl = 60;
+    private m_ttl = 60;
 
     /**
      * Constructs a new Redis helper instance
@@ -63,11 +63,67 @@ export default class extends EventEmitter {
     }
 
     /**
+     * Deletes the value at the specified key from the underlying RedisClient instance
+     * @param key
+     * @param nothrow
+     */
+    public async del (key: any, nothrow = false): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.m_client.del(this.stringify(key), error => {
+                if (error && !nothrow) {
+                    return reject(error);
+                }
+
+                return resolve();
+            });
+        });
+    }
+
+    /**
      * Ends the underlying RedisClient instance
      * @param flush
      */
     public async end (flush = true): Promise<void> {
         this.m_client.end(flush);
+    }
+
+    /**
+     * Checks if the given key exists in the underlying RedisClient instance
+     * @param key
+     */
+    public async exists (key: any): Promise<boolean> {
+        try {
+            await this.get(key);
+
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Flushes all records from the underlying RedisClient instance
+     */
+    public async flush (): Promise<void> {
+        return new Promise((resolve, reject) => {
+            if (this.database) {
+                this.m_client.flushdb(error => {
+                    if (error) {
+                        return reject(error);
+                    }
+
+                    return resolve();
+                });
+            } else {
+                this.m_client.flushall(error => {
+                    if (error) {
+                        return reject(error);
+                    }
+
+                    return resolve();
+                });
+            }
+        });
     }
 
     /**
@@ -77,25 +133,96 @@ export default class extends EventEmitter {
     public async get<T> (key: any): Promise<T> {
         return new Promise((resolve, reject) => {
             this.m_client.get(
-                typeof key !== 'string' ? JSON.stringify(key) : key,
+                this.stringify(key),
                 (error, reply) => {
-                    if (error) {
+                    if (error || !reply) {
                         return reject(error);
                     }
 
-                    if (reply) {
-                        const parsed = JSON.parse(reply);
+                    const parsed = this.unstringify<T>(reply);
 
-                        this.emit('get', key, parsed);
+                    this.emit('get', key, parsed);
 
-                        return resolve(parsed);
-                    }
-
-                    this.emit('get', key, {});
-
-                    return resolve({} as T);
+                    return resolve(parsed);
                 });
         });
+    }
+
+    /**
+     * Returns a list of all keys in the cache
+     * @param pattern
+     */
+    public async keys (pattern = '*'): Promise<any[]> {
+        return new Promise((resolve, reject) => {
+            this.m_client.keys(pattern, (error, keys) => {
+                if (error) {
+                    return reject(error);
+                }
+
+                keys = keys.map(key => this.unstringify(key));
+
+                return resolve(keys);
+            });
+        });
+    }
+
+    /**
+     * Returns a map of all keys and values in the underlying RedisClient
+     */
+    public async list<T> (): Promise<Map<any, T>> {
+        const keys = await this.keys();
+
+        return this.mget(keys);
+    }
+
+    public async _mget (keys: string[], nothrow = false): Promise<Map<string, string>> {
+        return new Promise((resolve, reject) => {
+            this.m_client.mget(keys, (error, values) => {
+                if (error && !nothrow) {
+                    return reject(error);
+                }
+
+                const response = new Map<string, string>();
+
+                for (let i = 0; i < keys.length; ++i) {
+                    response.set(keys[i], values[i]);
+                }
+
+                return resolve(response);
+            });
+        });
+    }
+
+    /**
+     * Mass deletes values with the specified keys from the cache
+     * @param keys
+     */
+    public async mdel (keys: any[]): Promise<void> {
+        const p = [];
+
+        for (const key of keys) {
+            p.push(this.del(key, true));
+        }
+
+        await Promise.all(p);
+    }
+
+    /**
+     * Mass retrieves values (as a map) with the specified keys from the underlying RedisClient
+     * @param keys
+     */
+    public async mget<T> (keys: any[]): Promise<Map<any, T>> {
+        const fetch_keys = keys.map(key => this.stringify(key));
+
+        const data = await this._mget(fetch_keys);
+
+        const values: Map<any, T> = new Map<any, T>();
+
+        for (const [key, value] of data) {
+            values.set(this.unstringify(key), this.unstringify(value) as T);
+        }
+
+        return values;
     }
 
     /**
@@ -115,11 +242,11 @@ export default class extends EventEmitter {
      * @param value
      * @param ttl
      */
-    public async set<T> (key: any, value: T, ttl = this.ttl): Promise<void> {
+    public async set<T> (key: any, value: T, ttl = this.m_ttl): Promise<void> {
         return new Promise((resolve, reject) => {
             this.m_client.set(
-                typeof key !== 'string' ? JSON.stringify(key) : key,
-                JSON.stringify(value),
+                this.stringify(key),
+                this.stringify(value),
                 'EX',
                 ttl,
                 (error, reply) => {
@@ -134,10 +261,34 @@ export default class extends EventEmitter {
         });
     }
 
+    private stringify (str: any): string {
+        return JSON.stringify(str);
+    }
+
+    /**
+     * Returns the current TTL for the record at the specified key in the underlying RedisClient
+     * @param key
+     */
+    public async ttl (key: any): Promise<number> {
+        return new Promise((resolve, reject) => {
+            this.m_client.ttl(this.stringify(key), (error, value) => {
+                if (error) {
+                    return reject(error);
+                }
+
+                return resolve(value);
+            });
+        });
+    }
+
     /**
      * Unref the underlying RedisClient socket so that the thread it is attached to can be closed
      */
     public async unref (): Promise<void> {
         this.m_client.unref();
+    }
+
+    private unstringify<T> (str: any): T {
+        return JSON.parse(str);
     }
 }
